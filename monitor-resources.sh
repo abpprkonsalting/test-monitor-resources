@@ -42,6 +42,7 @@ OUTPUT=""
 EXPORT_CSV=0
 
 # Rotation defaults.
+MAX_LOG_SIZE="10M"
 MAX_LOG_BYTES=$((10 * 1024 * 1024))
 MAX_ROTATIONS=5
 
@@ -63,14 +64,21 @@ PAGE_SIZE="$(getconf PAGESIZE 2>/dev/null || echo 4096)"
 usage() {
     cat <<'EOF'
 Usage:
-  monitor-resources.sh [-i seconds] [-o logfile] [-csv] selector...
+  monitor-resources.sh [-i seconds] [-o logfile] [-csv] [-s size] [-r count] selector...
 
 Options:
   -i SECONDS   Sampling interval (default: 5 seconds)
   -o FILE      Log file
   -csv         Export CSV when monitoring exits; requires -o
+  -s SIZE      Maximum size per log file (default: 10M)
+                    Supported suffixes: K, M, G
+  -r COUNT     Number of rotated log files to retain (default: 5)
   -h, --help   Show help
 
+Rotation:
+  Active log: logfile
+  Rotations:  logfile.1 through logfile.COUNT
+  
 Rotation defaults:
   Maximum active log size: 10 MiB
   Retained rotated files:  5
@@ -81,15 +89,43 @@ Existing logs:
   whether to append or overwrite.
 
 Examples:
-  sudo ./monitor-resources.sh -i 5 \
+  ./monitor-resources.sh -i 5 \
       -o map-rezi-resources.log -csv \
       map-rezi-api.service map-rezi-fetcher.service mariadb.service
+  ./monitor-resources.sh -i 5 -s 20M -r 10 -o monitor.log -csv node
+  ./monitor-resources.sh -s 5M -r 3 -o monitor.log node
 EOF
 }
 
 die() {
     printf 'ERROR: %s\n' "$*" >&2
     exit 1
+}
+
+parse_size() {
+    local value="$1"
+    local number suffix multiplier
+
+    if [[ ! "$value" =~ ^([0-9]+)([KkMmGg]?)$ ]]; then
+        return 1
+    fi
+
+    number="${BASH_REMATCH[1]}"
+    suffix="${BASH_REMATCH[2]}"
+
+    case "$suffix" in
+        K|k) multiplier=1024 ;;
+        M|m) multiplier=$((1024 * 1024)) ;;
+        G|g) multiplier=$((1024 * 1024 * 1024)) ;;
+        *)   multiplier=1 ;;
+    esac
+
+    ((number > 0)) || return 1
+
+    # Avoid integer overflow in Bash arithmetic.
+    ((number <= 9223372036854775807 / multiplier)) || return 1
+
+    printf '%s\n' "$((number * multiplier))"
 }
 
 # ------------------------------------------------------------
@@ -116,6 +152,16 @@ while (($#)); do
             usage
             exit 0
             ;;
+        -s)
+            (($# >= 2)) || die "Option -s requires a size, e.g. 10M."
+            MAX_LOG_SIZE="$2"
+            shift 2
+            ;;
+        -r)
+            (($# >= 2)) || die "Option -r requires a rotation count."
+            MAX_ROTATIONS="$2"
+            shift 2
+            ;;
         --)
             shift
             SELECTORS+=("$@")
@@ -131,6 +177,23 @@ while (($#)); do
     esac
 done
 
+# Convert the configured maximum file size into bytes.
+MAX_LOG_BYTES="$(parse_size "$MAX_LOG_SIZE")" ||
+    die "Invalid log size '$MAX_LOG_SIZE'. Use a positive integer with optional K, M, or G suffix, e.g. 512K, 10M, or 1G."
+
+# Validate the number of retained rotations.
+[[ "$MAX_ROTATIONS" =~ ^[0-9]+$ ]] ||
+    die "Invalid rotation count '$MAX_ROTATIONS'. Use a non-negative integer."
+
+# CSV export requires a named log file.
+if ((EXPORT_CSV)) && [[ -z "$OUTPUT" ]]; then
+    die "CSV export requires -o FILE. Example: -o monitor.log -csv"
+fi
+
+if ((EXPORT_CSV)) && ! command -v python3 >/dev/null 2>&1; then
+    die "CSV export requires python3, but python3 was not found."
+fi
+
 [[ "$INTERVAL" =~ ^[0-9]+([.][0-9]+)?$ ]] ||
     die "Sampling interval must be a positive number."
 
@@ -139,15 +202,6 @@ awk -v n="$INTERVAL" 'BEGIN { exit !(n > 0) }' ||
 
 ((${#SELECTORS[@]} > 0)) ||
     die "No process selectors supplied. Use -h for help."
-
-# CSV export requires a named log file.
-if ((EXPORT_CSV)) && [[ -z "$OUTPUT" ]]; then
-    die "CSV export requires -o FILE. Example: -o map-rezi-resources.log -csv"
-fi
-
-if ((EXPORT_CSV)) && ! command -v python3 >/dev/null 2>&1; then
-    die "CSV export requires python3, but python3 was not found."
-fi
 
 # ------------------------------------------------------------
 # Determine CSV filename from the log filename.
@@ -184,8 +238,17 @@ get_csv_filename() {
 rotate_logs() {
     local i
 
+    # With zero retained rotations, discard the active log.
+    if ((MAX_ROTATIONS == 0)); then
+        : > "$LOG_FILE" || return 1
+        chmod 0640 -- "$LOG_FILE" || return 1
+        return 0
+    fi
+
+    # Remove the oldest retained rotation.
     rm -f -- "$LOG_FILE.$MAX_ROTATIONS" || return 1
 
+    # Shift existing rotations upward.
     for ((i = MAX_ROTATIONS - 1; i >= 1; i--)); do
         if [[ -e "$LOG_FILE.$i" ]]; then
             mv -f -- "$LOG_FILE.$i" "$LOG_FILE.$((i + 1))" ||
@@ -193,10 +256,12 @@ rotate_logs() {
         fi
     done
 
+    # Move the active log to rotation .1.
     if [[ -e "$LOG_FILE" ]]; then
         mv -f -- "$LOG_FILE" "$LOG_FILE.1" || return 1
     fi
 
+    # Start a new active log.
     : > "$LOG_FILE" || return 1
     chmod 0640 -- "$LOG_FILE" || return 1
 
@@ -660,8 +725,9 @@ fi
 
 log "Resource monitor started at $(date '+%Y-%m-%d %H:%M:%S')"
 log "Sampling interval: $INTERVAL seconds"
-log "Maximum log size: $MAX_LOG_BYTES bytes"
+log "Maximum log size: $MAX_LOG_SIZE ($MAX_LOG_BYTES bytes)"
 log "Maximum retained rotations: $MAX_ROTATIONS"
+log "Approximate total retained log capacity: $((MAX_LOG_BYTES * (MAX_ROTATIONS + 1))) bytes"
 log "Selectors: ${SELECTORS[*]}"
 
 if [[ -n "$LOG_FILE" ]]; then
