@@ -7,11 +7,12 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 MONITOR="$SCRIPT_DIR/monitor-resources.sh"
-REPORT="$SCRIPT_DIR/test-report.txt"
+ARTIFACTS_DIR="$SCRIPT_DIR/test-artifacts-$(date +%Y%m%d-%H%M%S)"
+mkdir -p "$ARTIFACTS_DIR"
+REPORT="$ARTIFACTS_DIR/test-report.txt"
+
 WORKDIR="/tmp/monitor-test-$$"
 mkdir -p "$WORKDIR"
-
-: > "$REPORT"
 FAIL_COUNT=0
 PASS_COUNT=0
 
@@ -24,6 +25,10 @@ record() {
 }
 
 cleanup() {
+    # preserve artefacts
+    if [[ -d "$WORKDIR" ]]; then
+        cp -a "$WORKDIR"/. "$ARTIFACTS_DIR"/ 2>/dev/null || true
+    fi
     # stop and remove dummy services
     for svc in $(systemctl list-unit-files 'monitor-test-*.service' --no-legend 2>/dev/null | awk '{print $1}'); do
         systemctl stop "$svc" 2>/dev/null || true
@@ -125,13 +130,13 @@ for n in 1 2 5 10; do
     # append mode: pre-create log then run with 'A'
     logfile="$WORKDIR/append.log"
     printf 'old line\n' > "$logfile"
-    printf 'A\n' | timeout 7 "$MONITOR" -i 2 -o "$logfile" -csv "${selectors[@]}" >/dev/null 2>&1 || true
+    printf 'A\n' | script -q -c "timeout 7 \"$MONITOR\" -i 2 -o \"$logfile\" -csv ${selectors[*]}" /dev/null >/dev/null 2>&1 || true
     if [[ -f "${logfile%.log}.csv" ]]; then record PASS "append-mode ($n)"; else record FAIL "append-mode ($n)"; fi
 
     # overwrite mode
     logfile="$WORKDIR/over.log"
     printf 'old line\n' > "$logfile"
-    printf 'O\n' | timeout 7 "$MONITOR" -i 2 -o "$logfile" -csv "${selectors[@]}" >/dev/null 2>&1 || true
+    printf 'O\n' | script -q -c "timeout 7 \"$MONITOR\" -i 2 -o \"$logfile\" -csv ${selectors[*]}" /dev/null >/dev/null 2>&1 || true
     if [[ -f "${logfile%.log}.csv" ]]; then record PASS "overwrite-mode ($n)"; else record FAIL "overwrite-mode ($n)"; fi
 
     # small rotation
