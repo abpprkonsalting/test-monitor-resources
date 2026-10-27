@@ -4,7 +4,7 @@ monitor-resources.sh
   Linux process resource monitor sampling CPU, RSS, VSZ, and I/O from /proc.
   Selectors: systemd service, numeric PID, or process name.
   Log rotation via -s SIZE and -r COUNT.
-  CSV export on exit with -csv (requires -o).
+  Direct CSV output on the fly with -save-to-csv (requires -o).
   Exported CSV is world-readable (0644) with traversable parent dirs.
   Config file support via -c FILE.
   Periodic CSV updates via -u SECONDS (0 = only on exit).
@@ -12,30 +12,26 @@ monitor-resources.sh
 
 Help (monitor-resources.sh -h):
 Usage:
-  monitor-resources.sh [-i seconds] [-o logfile] [-csv] [-s size] [-r count] [-u seconds] selector...
+  monitor-resources.sh [-i seconds] [-o file] [-save-to-csv] [-s size] [-r count] selector...
   monitor-resources.sh -c /path/to/config
 
 Options:
-  -c FILE      Load configuration from file
-  -i SECONDS   Sampling interval (default: 5 seconds)
-  -o FILE      Log file
-  -csv         Export CSV when monitoring exits; requires -o
-  -s SIZE      Maximum size per log file (default: 10M)
-                     Supported suffixes: K, M, G
-  -r COUNT     Number of rotated log files to retain (default: 5)
-  -u SECONDS   Periodic CSV update interval (default: 0, only on exit)
-  -h, --help   Show help
+  -c FILE          Load configuration from file
+  -i SECONDS       Sampling interval (default: 5 seconds)
+  -o FILE          Output file (log or CSV)
+  -save-to-csv     Write CSV rows directly to the output file on the fly; requires -o
+  -s SIZE          Maximum size per file (default: 10M)
+                         Supported suffixes: K, M, G
+  -r COUNT         Number of rotated files to retain (default: 5)
+  -h, --help       Show help
 
 Config file format (used with -c):
   # monitor-resources configuration
   INTERVAL=5
   OUTPUT=/var/log/monitor-resources/resources.log
-  EXPORT_CSV=1
+  SAVE_TO_CSV=1
   MAX_LOG_SIZE=10M
   MAX_ROTATIONS=5
-  CSV_MAX_SIZE=10M
-  CSV_MAX_ROTATIONS=5
-  CSV_UPDATE_INTERVAL=30
   SELECTORS=(map-rezi-api.service mariadb.service)
 
 Rotation:
@@ -51,22 +47,17 @@ Existing logs:
   If the active log or a rotated log exists, you will be asked
   whether to append or overwrite.
 
-Periodic CSV updates:
-  When -u SECONDS (or CSV_UPDATE_INTERVAL in config) is > 0, the CSV
-  is regenerated at that interval during monitoring. CSV is also
-  exported on exit regardless.
-
 CSV file rotation:
-  CSV_MAX_SIZE: Maximum size per CSV file (default 10M). When a CSV
-  exceeds this size, it is rotated before the next export.
-  CSV_MAX_ROTATIONS: Number of rotated CSV files to retain (default 5).
+  MAX_LOG_SIZE: Maximum size per CSV file (default 10M). When a CSV
+  exceeds this size, it is rotated before appending a new row.
+  MAX_ROTATIONS: Number of rotated CSV files to retain (default 5).
   CSV rotation works like log rotation: resources.csv.1, resources.csv.2, etc.
 
 Examples:
   ./monitor-resources.sh -i 5 \
-      -o map-rezi-resources.log -csv \
+      -o map-rezi-resources.log \
       map-rezi-api.service map-rezi-fetcher.service mariadb.service
-  ./monitor-resources.sh -i 5 -s 20M -r 10 -o monitor.log -csv node
+  ./monitor-resources.sh -i 5 -o monitor.csv -save-to-csv node
   ./monitor-resources.sh -s 5M -r 3 -o monitor.log node
   ./monitor-resources.sh -c /etc/monitor-resources/config
 
@@ -98,11 +89,11 @@ test-monitor-resources.sh
   Run as root: sudo ./test-monitor-resources.sh
 
 Test cases (per run count: 1, 2, 5, 10; plus monitor's own PID for multi-process):
-  1. basic: normal run with -i, -o, -csv; expects CSV produced.
-  2. csv-without-o: run with -csv but no -o; expects failure.
+  1. basic: normal run with -i, -o, -save-to-csv; expects CSV produced.
+  2. save-to-csv-without-o: run with -save-to-csv but no -o; expects failure.
   3. invalid-selector: nonexistent process; expects CSV still produced.
-  4. append-mode: pre-existing log, sends 'A'; expects preserved history + CSV.
-  5. overwrite-mode: pre-existing log, sends 'O'; expects logs removed + CSV.
+  4. append-mode: pre-existing CSV, sends 'A'; expects preserved history + CSV.
+  5. overwrite-mode: pre-existing CSV, sends 'O'; expects CSV removed + fresh CSV.
   6. rotation: small -s 4K -r 3; expects CSV after possible rotation.
   7. rotations-zero: -s 2K -r 0; expects CSV with zero retained rotations.
 
