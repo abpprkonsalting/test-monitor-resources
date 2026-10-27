@@ -8,6 +8,7 @@ set -uo pipefail
 #
 # Usage:
 #   ./monitor-resources.sh [-i seconds] [-o logfile] [-csv] selector...
+#   ./monitor-resources.sh -c /path/to/config
 #
 # Examples:
 #   sudo ./monitor-resources.sh -i 5 \
@@ -46,6 +47,10 @@ MAX_LOG_SIZE="10M"
 MAX_LOG_BYTES=$((10 * 1024 * 1024))
 MAX_ROTATIONS=5
 
+# CSV update frequency in seconds (0 = only on exit)
+CSV_UPDATE_INTERVAL=0
+LAST_CSV_UPDATE=0
+
 declare -a SELECTORS=()
 declare -A PREV_CPU=()
 declare -A PREV_READ=()
@@ -61,23 +66,49 @@ TEMP_CSV=""
 CLK_TCK="$(getconf CLK_TCK 2>/dev/null || echo 100)"
 PAGE_SIZE="$(getconf PAGESIZE 2>/dev/null || echo 4096)"
 
+load_config() {
+    local config_file="$1"
+    [[ -f "$config_file" ]] || die "Config file not found: $config_file"
+    [[ -r "$config_file" ]] || die "Config file not readable: $config_file"
+    
+    # Source the config file safely
+    # shellcheck disable=SC1090
+    source "$config_file" || die "Failed to load config file: $config_file"
+    
+     # Apply config values if set
+    [[ -n "${INTERVAL:-}" ]] && INTERVAL="$INTERVAL"
+    [[ -n "${OUTPUT:-}" ]] && OUTPUT="$OUTPUT"
+    [[ -n "${EXPORT_CSV:-}" ]] && EXPORT_CSV="$EXPORT_CSV"
+    [[ -n "${MAX_LOG_SIZE:-}" ]] && MAX_LOG_SIZE="$MAX_LOG_SIZE"
+    [[ -n "${MAX_ROTATIONS:-}" ]] && MAX_ROTATIONS="$MAX_ROTATIONS"
+    [[ -n "${CSV_UPDATE_INTERVAL:-}" ]] && CSV_UPDATE_INTERVAL="$CSV_UPDATE_INTERVAL"
+    
+    # Load selectors if defined as array
+    if [[ -n "${SELECTORS[@]:-}" ]]; then
+        SELECTORS=("${SELECTORS[@]}")
+    fi
+}
+
 usage() {
     cat <<'EOF'
 Usage:
-  monitor-resources.sh [-i seconds] [-o logfile] [-csv] [-s size] [-r count] selector...
+  monitor-resources.sh [-i seconds] [-o logfile] [-csv] [-s size] [-r count] [-u seconds] selector...
+  monitor-resources.sh -c /path/to/config
 
 Options:
+  -c FILE      Load configuration from file
   -i SECONDS   Sampling interval (default: 5 seconds)
   -o FILE      Log file
   -csv         Export CSV when monitoring exits; requires -o
   -s SIZE      Maximum size per log file (default: 10M)
-                    Supported suffixes: K, M, G
+                     Supported suffixes: K, M, G
   -r COUNT     Number of rotated log files to retain (default: 5)
+  -u SECONDS   Periodic CSV update interval (default: 0, only on exit)
   -h, --help   Show help
 
 Rotation:
   Active log: logfile
-  Rotations:  logfile.1 through logfile.COUNT
+  Rotations:  logfile.COUNT
   
 Rotation defaults:
   Maximum active log size: 10 MiB
@@ -94,6 +125,7 @@ Examples:
       map-rezi-api.service map-rezi-fetcher.service mariadb.service
   ./monitor-resources.sh -i 5 -s 20M -r 10 -o monitor.log -csv node
   ./monitor-resources.sh -s 5M -r 3 -o monitor.log node
+  ./monitor-resources.sh -c /etc/monitor-resources/config
 EOF
 }
 
@@ -134,6 +166,16 @@ parse_size() {
 
 while (($#)); do
     case "$1" in
+        -c)
+            (($# >= 2)) || die "Option -c requires a config file."
+            load_config "$2"
+            shift 2
+            ;;
+        -u)
+            (($# >= 2)) || die "Option -u requires a value in seconds."
+            CSV_UPDATE_INTERVAL="$2"
+            shift 2
+            ;;
         -i)
             (($# >= 2)) || die "Option -i requires a value."
             INTERVAL="$2"
@@ -177,6 +219,10 @@ while (($#)); do
     esac
 done
 
+# ------------------------------------------------------------
+# Validate parameters (from CLI or config)
+# ------------------------------------------------------------
+
 # Convert the configured maximum file size into bytes.
 MAX_LOG_BYTES="$(parse_size "$MAX_LOG_SIZE")" ||
     die "Invalid log size '$MAX_LOG_SIZE'. Use a positive integer with optional K, M, or G suffix, e.g. 512K, 10M, or 1G."
@@ -184,6 +230,10 @@ MAX_LOG_BYTES="$(parse_size "$MAX_LOG_SIZE")" ||
 # Validate the number of retained rotations.
 [[ "$MAX_ROTATIONS" =~ ^[0-9]+$ ]] ||
     die "Invalid rotation count '$MAX_ROTATIONS'. Use a non-negative integer."
+
+# Validate CSV update interval (0 = only on exit).
+[[ "$CSV_UPDATE_INTERVAL" =~ ^[0-9]+$ ]] ||
+    die "Invalid CSV update interval '$CSV_UPDATE_INTERVAL'. Use a non-negative integer."
 
 # CSV export requires a named log file.
 if ((EXPORT_CSV)) && [[ -z "$OUTPUT" ]]; then
@@ -875,4 +925,12 @@ while :; do
     done
 
     sleep "$INTERVAL"
+
+    # Periodic CSV update if configured
+    if ((EXPORT_CSV)) && ((CSV_UPDATE_INTERVAL > 0)); then
+        now_sec="${now%.*}"
+        if ((LAST_CSV_UPDATE == 0 || now_sec - LAST_CSV_UPDATE >= CSV_UPDATE_INTERVAL)); then
+            export_csv "$CSV_FILE" && LAST_CSV_UPDATE="$now_sec"
+        fi
+    fi
 done
