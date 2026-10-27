@@ -47,6 +47,11 @@ MAX_LOG_SIZE="10M"
 MAX_LOG_BYTES=$((10 * 1024 * 1024))
 MAX_ROTATIONS=5
 
+# CSV rotation defaults.
+CSV_MAX_SIZE="10M"
+CSV_MAX_BYTES=$((10 * 1024 * 1024))
+CSV_MAX_ROTATIONS=5
+
 # CSV update frequency in seconds (0 = only on exit)
 CSV_UPDATE_INTERVAL=0
 LAST_CSV_UPDATE=0
@@ -81,6 +86,8 @@ load_config() {
     [[ -n "${EXPORT_CSV:-}" ]] && EXPORT_CSV="$EXPORT_CSV"
     [[ -n "${MAX_LOG_SIZE:-}" ]] && MAX_LOG_SIZE="$MAX_LOG_SIZE"
     [[ -n "${MAX_ROTATIONS:-}" ]] && MAX_ROTATIONS="$MAX_ROTATIONS"
+    [[ -n "${CSV_MAX_SIZE:-}" ]] && CSV_MAX_SIZE="$CSV_MAX_SIZE"
+    [[ -n "${CSV_MAX_ROTATIONS:-}" ]] && CSV_MAX_ROTATIONS="$CSV_MAX_ROTATIONS"
     [[ -n "${CSV_UPDATE_INTERVAL:-}" ]] && CSV_UPDATE_INTERVAL="$CSV_UPDATE_INTERVAL"
     
     # Load selectors if defined as array
@@ -227,9 +234,15 @@ done
 MAX_LOG_BYTES="$(parse_size "$MAX_LOG_SIZE")" ||
     die "Invalid log size '$MAX_LOG_SIZE'. Use a positive integer with optional K, M, or G suffix, e.g. 512K, 10M, or 1G."
 
+CSV_MAX_BYTES="$(parse_size "$CSV_MAX_SIZE")" ||
+    die "Invalid CSV size '$CSV_MAX_SIZE'. Use a positive integer with optional K, M, or G suffix, e.g. 512K, 10M, or 1G."
+
 # Validate the number of retained rotations.
 [[ "$MAX_ROTATIONS" =~ ^[0-9]+$ ]] ||
     die "Invalid rotation count '$MAX_ROTATIONS'. Use a non-negative integer."
+
+[[ "$CSV_MAX_ROTATIONS" =~ ^[0-9]+$ ]] ||
+    die "Invalid CSV rotation count '$CSV_MAX_ROTATIONS'. Use a non-negative integer."
 
 # Validate CSV update interval (0 = only on exit).
 [[ "$CSV_UPDATE_INTERVAL" =~ ^[0-9]+$ ]] ||
@@ -590,6 +603,42 @@ ensure_public_csv_access() {
 # PID is omitted from the exported CSV.
 # ------------------------------------------------------------
 
+rotate_csv() {
+    local destination="$1"
+    local current_size
+    local i
+
+    current_size="$(stat -c '%s' -- "$destination" 2>/dev/null || echo 0)"
+
+    # If current CSV exceeds max size, rotate
+    if ((current_size > CSV_MAX_BYTES)); then
+        # With zero retained rotations, discard the active CSV.
+        if ((CSV_MAX_ROTATIONS == 0)); then
+            : > "$destination" || return 1
+            chmod 0644 -- "$destination" || return 1
+            return 0
+        fi
+
+        # Remove the oldest retained rotation.
+        rm -f -- "$destination.$CSV_MAX_ROTATIONS" || return 1
+
+        # Shift existing rotations upward.
+        for ((i = CSV_MAX_ROTATIONS - 1; i >= 1; i--)); do
+            if [[ -e "$destination.$i" ]]; then
+                mv -f -- "$destination.$i" "$destination.$((i + 1))" ||
+                    return 1
+            fi
+        done
+
+        # Move the active CSV to rotation .1.
+        if [[ -e "$destination" ]]; then
+            mv -f -- "$destination" "$destination.1" || return 1
+        fi
+    fi
+
+    return 0
+}
+
 export_csv() {
     local destination="$1"
     local destination_dir
@@ -617,6 +666,12 @@ export_csv() {
 
     ((${#input_logs[@]} > 0)) || {
         printf 'ERROR: No log files available for CSV export.\n' >&2
+        return 1
+    }
+
+    # Rotate CSV files before writing new one.
+    rotate_csv "$destination" || {
+        printf 'ERROR: CSV rotation failed for %s\n' "$destination" >&2
         return 1
     }
 

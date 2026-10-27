@@ -33,6 +33,8 @@ Config file format (used with -c):
   EXPORT_CSV=1
   MAX_LOG_SIZE=10M
   MAX_ROTATIONS=5
+  CSV_MAX_SIZE=10M
+  CSV_MAX_ROTATIONS=5
   CSV_UPDATE_INTERVAL=30
   SELECTORS=(map-rezi-api.service mariadb.service)
 
@@ -53,6 +55,12 @@ Periodic CSV updates:
   When -u SECONDS (or CSV_UPDATE_INTERVAL in config) is > 0, the CSV
   is regenerated at that interval during monitoring. CSV is also
   exported on exit regardless.
+
+CSV file rotation:
+  CSV_MAX_SIZE: Maximum size per CSV file (default 10M). When a CSV
+  exceeds this size, it is rotated before the next export.
+  CSV_MAX_ROTATIONS: Number of rotated CSV files to retain (default 5).
+  CSV rotation works like log rotation: resources.csv.1, resources.csv.2, etc.
 
 Examples:
   ./monitor-resources.sh -i 5 \

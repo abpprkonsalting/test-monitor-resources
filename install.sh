@@ -249,6 +249,27 @@ collect_params() {
         echo "ERROR: Must be a non-negative integer." >&2
     done
     
+    # CSV rotation parameters
+    local csv_max_size
+    while true; do
+        read -rp "Max CSV size per file [10M]: " csv_max_size
+        csv_max_size=${csv_max_size:-10M}
+        if [[ "$csv_max_size" =~ ^[0-9]+([KkMmGg]?)$ ]]; then
+            break
+        fi
+        echo "ERROR: Invalid size format. Use number with optional K,M,G suffix." >&2
+    done
+    
+    local csv_max_rotations
+    while true; do
+        read -rp "Number of rotated CSVs to retain [5]: " csv_max_rotations
+        csv_max_rotations=${csv_max_rotations:-5}
+        if [[ "$csv_max_rotations" =~ ^[0-9]+$ ]]; then
+            break
+        fi
+        echo "ERROR: Must be a non-negative integer." >&2
+    done
+    
     echo ""
     echo "Enter process selectors (systemd service names like foo.service, PIDs, or process names)" >&2
     echo "Enter one per line. Press Enter on empty line when done." >&2
@@ -277,6 +298,8 @@ collect_params() {
         fi
         echo "MAX_LOG_SIZE=$size"
         echo "MAX_ROTATIONS=$rotations"
+        echo "CSV_MAX_SIZE=$csv_max_size"
+        echo "CSV_MAX_ROTATIONS=$csv_max_rotations"
         echo "CSV_UPDATE_INTERVAL=$csv_update_interval"
         echo "SELECTORS=(${selectors[*]})"
     } > "$config_file"
@@ -288,6 +311,8 @@ collect_params() {
     echo "  Log file: $logfile" >&2
     echo "  CSV export: $([ -n "$csv_flag" ] && echo yes || echo no)" >&2
     echo "  CSV update interval: ${csv_update_interval}s" >&2
+    echo "  Max CSV size: $csv_max_size" >&2
+    echo "  CSV rotations: $csv_max_rotations" >&2
     echo "  Max size: $size" >&2
     echo "  Rotations: $rotations" >&2
     echo "  Selectors: ${selectors[*]}" >&2
