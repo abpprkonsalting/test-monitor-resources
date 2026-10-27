@@ -620,7 +620,12 @@ export_csv() {
         return 1
     }
 
-    ensure_public_csv_access "$destination" || return 1
+    # Try to make CSV world-readable; if the directory is not
+    # traversable by others (e.g. a home directory), still export
+    # the CSV but skip the traversal check.
+    if ! ensure_public_csv_access "$destination"; then
+        printf 'WARNING: Cannot make CSV world-traversable; keeping owner-only access.\n' >&2
+    fi
 
     TEMP_CSV="$(mktemp "${destination}.tmp.XXXXXX")" || {
         printf 'ERROR: Cannot create temporary CSV file.\n' >&2
@@ -715,8 +720,6 @@ PYTHON
         printf 'ERROR: Cannot set CSV permissions to 0644.\n' >&2
         return 1
     }
-
-    ensure_public_csv_access "$destination" || return 1
 
     printf 'CSV exported: %s\n' "$destination" >&2
     printf 'CSV permissions: %s\n' \
