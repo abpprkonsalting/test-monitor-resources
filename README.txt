@@ -8,7 +8,7 @@ monitor-resources.sh
   Exported CSV is world-readable (0644) with traversable parent dirs.
   Config file support via -c FILE.
   Periodic CSV updates via -u SECONDS (0 = only on exit).
-  Service installation via install.sh (systemd).
+  Service installation via install.sh (systemd system service, requires root).
 
 Help (monitor-resources.sh -h):
 Usage:
@@ -71,20 +71,22 @@ Examples:
   ./monitor-resources.sh -c /etc/monitor-resources/config
 
 install.sh
-  Automated installer for running monitor-resources.sh as a systemd service.
+  Automated installer for running monitor-resources.sh as a systemd system service.
+  Must be run as root (sudo).
   Usage:
-    ./install.sh          Interactively create/reconfigure service
-    ./install.sh --uninstall  Stop and remove service (preserves log files)
+    sudo ./install.sh         Interactively create/reconfigure service
+    sudo ./install.sh --uninstall  Stop and remove service (preserves log files)
 
   Features:
     - Checks prerequisites (python3, systemctl, getconf)
     - Prompts for interval, log file, CSV export, CSV update frequency,
       rotation size/count, and process selectors
-    - Saves config to /etc/monitor-resources/config (root) or
-      ~/.config/monitor-resources/config (user)
-    - Installs script to /usr/local/bin/ (root) or ~/.local/bin/ (user)
-    - Creates systemd unit, enables and starts service
+    - Saves config to /etc/monitor-resources/config
+    - Installs script to /usr/local/bin/
+    - Creates systemd unit at /etc/systemd/system/monitor-resources.service,
+      enables and starts service as root
     - Detects and reconfigures existing installations
+    - Run as root to monitor system services (requires /proc access)
 
   The CSV Update Frequency prompt controls periodic CSV generation:
     0  = only export CSV when the service stops (default)
