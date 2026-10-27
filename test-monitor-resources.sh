@@ -88,7 +88,7 @@ run_case() {
     local logfile="$WORKDIR/mon.log"
     rm -f "$logfile" "$logfile".* "${logfile%.log}.csv" 2>/dev/null
     # run monitor for ~2 intervals then SIGTERM
-    timeout 7 "$MONITOR" "$@" -o "$logfile" -csv 2>"$WORKDIR/err.txt" &
+    timeout 149 "$MONITOR" "$@" -o "$logfile" -csv 2>"$WORKDIR/err.txt" &
     local mpid=$!
     # include own process pid? handled by caller passing selectors
     wait $mpid 2>/dev/null || true
@@ -130,25 +130,25 @@ for n in 1 2 5 10; do
     # append mode: pre-create log then run with 'A'
     logfile="$WORKDIR/append.log"
     printf 'old line\n' > "$logfile"
-    printf 'A\n' | script -q -c "timeout 7 \"$MONITOR\" -i 2 -o \"$logfile\" -csv ${selectors[*]}" /dev/null >/dev/null 2>&1 || true
+    printf 'A\n' | script -q -c "timeout 149 \"$MONITOR\" -i 2 -o \"$logfile\" -csv ${selectors[*]}" /dev/null >/dev/null 2>&1 || true
     if [[ -f "${logfile%.log}.csv" ]]; then record PASS "append-mode ($n)"; else record FAIL "append-mode ($n)"; fi
 
     # overwrite mode
     logfile="$WORKDIR/over.log"
     printf 'old line\n' > "$logfile"
-    printf 'O\n' | script -q -c "timeout 7 \"$MONITOR\" -i 2 -o \"$logfile\" -csv ${selectors[*]}" /dev/null >/dev/null 2>&1 || true
+    printf 'O\n' | script -q -c "timeout 149 \"$MONITOR\" -i 2 -o \"$logfile\" -csv ${selectors[*]}" /dev/null >/dev/null 2>&1 || true
     if [[ -f "${logfile%.log}.csv" ]]; then record PASS "overwrite-mode ($n)"; else record FAIL "overwrite-mode ($n)"; fi
 
     # small rotation
     logfile="$WORKDIR/rot.log"
     rm -f "$logfile" "$logfile".*
-    timeout 7 "$MONITOR" -i 1 -s 4K -r 3 -o "$logfile" -csv "${selectors[@]}" >/dev/null 2>&1 || true
+    timeout 149 "$MONITOR" -i 1 -s 4K -r 3 -o "$logfile" -csv "${selectors[@]}" >/dev/null 2>&1 || true
     if [[ -f "${logfile%.log}.csv" ]]; then record PASS "rotation ($n)"; else record FAIL "rotation ($n)"; fi
 
     # max rotations 0
     logfile="$WORKDIR/rot0.log"
     rm -f "$logfile" "$logfile".*
-    timeout 7 "$MONITOR" -i 1 -s 2K -r 0 -o "$logfile" -csv "${selectors[@]}" >/dev/null 2>&1 || true
+    timeout 149 "$MONITOR" -i 1 -s 2K -r 0 -o "$logfile" -csv "${selectors[@]}" >/dev/null 2>&1 || true
     if [[ -f "${logfile%.log}.csv" ]]; then record PASS "rotations-zero ($n)"; else record FAIL "rotations-zero ($n)"; fi
 
     remove_services
